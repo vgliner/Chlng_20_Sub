@@ -1,0 +1,8 @@
+version: '3.4'
+
+services:
+  chlng20sub:
+    image: chlng20sub
+    build:
+      context: .
+      dockerfile: Dockerfile

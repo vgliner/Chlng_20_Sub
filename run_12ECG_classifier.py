@@ -76,10 +76,14 @@ def run_12ECG_classifier(data,header_data,classes,model):
     classification_results=[]
     for split_record in(split_records):
         classification_result=[]
+        for ii,sl in enumerate(split_record[0]):
+            split_record[0][ii]=np.nan_to_num(split_record[0][ii], nan=0.0)
         x = (torch.from_numpy(split_record[0]).float().unsqueeze(0).to(device),torch.from_numpy(split_record[1]).float().unsqueeze(0).unsqueeze(0).to(device))
         for cntr in range(9):
             classification_result.append((model[cntr].forward(x)).data.cpu().numpy())
-        classification_results.append(classification_result)
+        Nans=np.argwhere(np.isnan(classification_result))
+        if len(Nans)==0:
+            classification_results.append(classification_result)
     classification_results=np.asarray(classification_results)
     classification_results=np.mean(classification_results,axis=0)
     current_label=np.asarray(classification_results>0,dtype=int).squeeze()

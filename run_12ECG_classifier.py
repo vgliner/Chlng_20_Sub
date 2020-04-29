@@ -41,6 +41,7 @@ def split_data_to_batches(data,header_data, to_normalize=True):
             print('Found NAN value in short records')
         norm_factor=(np.amax(short_records,1)-np.amin(short_records,1))
         if to_normalize:
+            norm_factor = np.where(norm_factor==0.0,1.0,norm_factor)
             short_records=np.asarray(short_records)/ norm_factor[:,np.newaxis]
         try:
             long_record=data[1,int(cntr//4*sample_rate*2.5):int((cntr//4+4)*sample_rate*2.5)]
@@ -85,7 +86,8 @@ def run_12ECG_classifier(data,header_data,classes,model):
         if len(Nans)==0:
             classification_results.append(classification_result)
     classification_results=np.asarray(classification_results)
-    classification_results=np.mean(classification_results,axis=0)
+    # classification_results=np.mean(classification_results,axis=0)
+    classification_results=np.max(classification_results,axis=0)
     current_label=np.asarray(classification_results>0,dtype=int).squeeze()
     if sum(current_label)==0:
         current_label[np.argmax(classification_results)]=1

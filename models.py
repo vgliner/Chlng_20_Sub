@@ -3,6 +3,24 @@ import torch.nn as nn
 import math
 import time
 
+# A simple but FF neural net
+class SimpleFFN(nn.Module):
+    def __init__(self, in_dim, num_of_classes, hidden_dims):
+        super().__init__()
+        
+        layers = []
+        for out_dim in hidden_dims:
+            layers.append(nn.Linear(in_dim, out_dim))
+            layers.append(nn.ReLU())
+            in_dim = out_dim
+
+        # single score for binary classification, class score for multi-class
+        layers.append(nn.Linear(in_dim, num_of_classes))
+
+        self.fc = nn.Sequential(*layers)
+    
+    def forward(self, x):
+        return self.fc(x)
 
 # A simple but versatile d1 convolutional neural net
 class ConvNet1d(nn.Module):

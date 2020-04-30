@@ -250,7 +250,53 @@ class Trainer(abc.ABC):
 
         return EpochResult(losses=losses, accuracy=accuracy,num_TP=TP,num_TN=TN,num_FP=FP,num_FN=FN, y=y, out = out)
 
+class FfTrainer(Trainer):
 
+    def train_batch(self, batch) -> BatchResult:
+        x, y = batch
+        x = x.to(self.device, dtype=torch.float)
+        y = y.to(self.device, dtype=torch.float)
+
+        self.optimizer.zero_grad()
+
+        out = self.model(x)
+        loss = self.loss_fn(out, y)
+        loss.backward()
+        self.optimizer.step()
+
+        num_correct = torch.sum((out > 0) == (y == 1))/9
+        TP = torch.sum((out > 0) * (y == 1))
+        TN = torch.sum((out <= 0) * (y == 0))
+        FP = torch.sum((out > 0) * (y == 0))
+        FN = torch.sum((out <= 0) * (y == 1))
+
+        return BatchResult(loss.item(), num_correct.item(),TP,TN,FP,FN,out,y)
+
+    def test_batch(self, batch) -> BatchResult:
+        x, y = batch
+        x = x.to(self.device, dtype=torch.float)
+        y = y.to(self.device, dtype=torch.float)
+
+        with torch.no_grad():
+            out = self.model(x)
+            loss = self.loss_fn(out, y)
+            num_correct = torch.sum((out > 0) == (y == 1))/9
+            out_norm=torch.sigmoid(out)
+            if self.classification_threshold==None:
+                TP = torch.sum((out > 0) * (y == 1))
+                TN = torch.sum((out <= 0) * (y == 0))
+                FP = torch.sum((out > 0) * (y == 0))
+                FN = torch.sum((out <= 0) * (y == 1))
+            else:
+                TP = torch.sum((out_norm >= self.classification_threshold) * (y == 1))
+                TN = torch.sum((out_norm < self.classification_threshold) * (y == 0))
+                FP = torch.sum((out_norm >= self.classification_threshold) * (y == 0))
+                FN = torch.sum((out_norm < self.classification_threshold) * (y == 1))  
+                num_correct = torch.sum((out_norm > self.classification_threshold) == (y == 1))
+
+
+        return BatchResult(loss.item(), num_correct.item(),TP,TN,FP,FN, out, y)
+    
 class Ecg12LeadNetTrainerBinary(Trainer):
 
     def train_batch(self, batch) -> BatchResult:

@@ -10,6 +10,7 @@ import torch.optim as optim
 import torch.nn as nn
 from training import Ecg12LeadNetTrainerBinary
 from torch.utils.data import DataLoader
+from os.path import exists
 
 
 def correct_corrupted_record(corrupted_record,num_of_seconds):
@@ -86,9 +87,13 @@ def run_12ECG_classifier(data,header_data,classes,model):
         if len(Nans)==0:
             classification_results.append(classification_result)
     classification_results=np.asarray(classification_results)
-    # classification_results=np.mean(classification_results,axis=0)
-    classification_results=np.max(classification_results,axis=0)
-    current_label=np.asarray(classification_results>0,dtype=int).squeeze()
+    classification_results=np.mean(classification_results,axis=0)
+    if len(model) > 9:
+        x = torch.sigmoid(torch.Tensor(classification_results).reshape((1,9))).to(device)
+        classification_results = model[9](x).data.cpu().numpy()
+        current_label=np.asarray(classification_results>0,dtype=int).squeeze()
+    else:
+        current_label=np.asarray(classification_results>0,dtype=int).squeeze()
     if sum(current_label)==0:
         current_label[np.argmax(classification_results)]=1
     current_score=np.squeeze(classification_results)
@@ -146,5 +151,16 @@ def load_12ECG_model():
         print(f'*** Loading checkpoint file {checkpoint_filename}')
         saved_state = torch.load(checkpoint_filename,
                                     map_location=device)
-        model[categ].load_state_dict(saved_state['model_state'])            
+        model[categ].load_state_dict(saved_state['model_state'])
+    
+    checkpoint_filename ='FF'+'.pt'
+    
+    if exists(checkpoint_filename):
+        hidden_FF = [10, 10]
+        model.append(models.SimpleFFN(number_of_categories, number_of_categories, hidden_FF).to(device))
+        print(model[number_of_categories])
+        print(f'*** Loading checkpoint file {checkpoint_filename}')
+        saved_state = torch.load(checkpoint_filename, map_location=device)
+        model[number_of_categories].load_state_dict(saved_state['model_state'])            
+    
     return model

@@ -12,8 +12,11 @@ class BatchResult(NamedTuple):
     num_TN: int
     num_FP: int
     num_FN: int
-    out : float
-    y : int
+    Fbeta: float
+    Gbeta: float
+    geometrical_mean: float
+    out: float
+    y: int
 
 
 class EpochResult(NamedTuple):
@@ -27,8 +30,9 @@ class EpochResult(NamedTuple):
     num_TN: int
     num_FP: int
     num_FN: int
-    out : float
-    y : int 
+    out: float
+    y: int
+
 
 class FitResult(NamedTuple):
     """

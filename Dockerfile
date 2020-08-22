@@ -1,4 +1,4 @@
-FROM python:3.7.3
+FROM python:3.7.6
 
 ## The MAINTAINER instruction sets the Author field of the generated images
 MAINTAINER vadim.gliner@gmail.com

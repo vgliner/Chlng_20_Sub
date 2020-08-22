@@ -7,7 +7,11 @@ import torch
 from torch.utils.data import DataLoader
 from typing import Callable, Any
 from pathlib import Path
+from torch.utils.data import Subset
+import numpy as np
 from train_results import BatchResult, EpochResult, FitResult
+
+EPS = torch.finfo(torch.float32).eps
 
 
 class Trainer(abc.ABC):
@@ -20,7 +24,7 @@ class Trainer(abc.ABC):
     - Single batch (train_batch/test_batch)
     """
 
-    def __init__(self, model, loss_fn, optimizer, device='cuda',classification_threshold=None):
+    def __init__(self, model, loss_fn, optimizer, device='cuda', classification_threshold=None):
         """
         Initialize the trainer.
         :param model: Instance of the model to train.
@@ -66,15 +70,14 @@ class Trainer(abc.ABC):
             Path(os.path.dirname(checkpoint_filename)).mkdir(exist_ok=True)
             full_path = os.path.realpath(__file__)
             path, filename = os.path.split(full_path)
-            full_path=os.path.join(path, checkpoint_filename)
 
-            if os.path.isfile(path+'//'+checkpoint_filename):
-                checkpoint_filename=path+'//'+ checkpoint_filename
+            if os.path.isfile(path + '//' + checkpoint_filename):
+                checkpoint_filename = path + '//' + checkpoint_filename
                 print(f'*** Loading checkpoint file {checkpoint_filename}')
                 saved_state = torch.load(checkpoint_filename,
                                          map_location=self.device)
                 best_acc = saved_state.get('best_acc', best_acc)
-                epochs_without_improvement =\
+                epochs_without_improvement = \
                     saved_state.get('ewi', epochs_without_improvement)
                 self.model.load_state_dict(saved_state['model_state'])
 
@@ -83,30 +86,15 @@ class Trainer(abc.ABC):
             verbose = False  # pass this to train/test_epoch.
             if epoch % print_every == 0 or epoch == num_epochs - 1:
                 verbose = True
-            self._print(f'--- EPOCH {epoch+1}/{num_epochs} ---', verbose)
+            self._print(f'--- EPOCH {epoch + 1}/{num_epochs} ---', verbose)
 
             train_result = self.train_epoch(dl_train, verbose=verbose, **kw)
-            (loss, acc,TP, TN, FP, FN, out, y) = train_result
+            (loss, acc, TP, TN, FP, FN, out, y) = train_result
             train_loss += loss
             train_acc.append(acc)
-            tr_acc=round(acc,2)
-            tr_loss=loss[-1]            
             test_result = self.test_epoch(dl_test, verbose=verbose, **kw)
-            (loss, acc,TP, TN, FP, FN, out, y) = test_result
-            te_acc=round(acc,2)
-            te_loss=loss[-1]       
+            (loss, acc, TP, TN, FP, FN, out, y) = test_result
             test_loss += loss
-            try:
-              is_best=(te_acc > best_acc)
-            except:
-              is_best=False
-            checkpoints_name_parsed=checkpoints.split("/")
-            with open(f"Execution_dump_kernel_{checkpoints_name_parsed[1]}.txt", "a") as myfile:
-                myfile.write(f'{actual_num_epochs} \t {tr_acc} \t {te_acc} \t {tr_loss} \t {te_loss} \t {is_best} \n')
-            if True:   #is_best
-                with open(f"Results_raw_dump_kernel_{checkpoints_name_parsed[1]}.txt", "a") as myfile:
-                    myfile.write(f'{actual_num_epochs} \t {te_acc} \t {te_loss} \t {is_best} \t {TP.item()} \t {TN.item()} \t {FP.item()} \t {FN.item()}\n')
-            actual_num_epochs += 1
 
             if checkpoints:
                 if not best_acc:
@@ -134,7 +122,7 @@ class Trainer(abc.ABC):
                                    model_state=self.model.state_dict())
                 torch.save(saved_state, checkpoint_filename)
                 print(f'*** Saved checkpoint {checkpoint_filename} '
-                      f'at epoch {epoch+1}')
+                      f'at epoch {epoch + 1}')
 
             if post_epoch_fn:
                 post_epoch_fn(epoch, train_result, test_result, verbose)
@@ -202,13 +190,13 @@ class Trainer(abc.ABC):
         dataloader, and prints progress along the way.
         """
         losses = []
-        y= []
+        y = []
         out = []
         num_correct = 0
-        TP = 0
-        TN = 0
-        FP = 0
-        FN = 0
+        tp = 0
+        tn = 0
+        fp = 0
+        fn = 0
         num_samples = len(dl.sampler)
         num_batches = len(dl.batch_sampler)
 
@@ -236,11 +224,10 @@ class Trainer(abc.ABC):
 
                 losses.append(batch_res.loss)
                 num_correct += batch_res.num_correct
-                TP += batch_res.num_TP
-                TN += batch_res.num_TN
-                FP += batch_res.num_FP
-                FN += batch_res.num_FN
-
+                tp += batch_res.num_TP
+                tn += batch_res.num_TN
+                fp += batch_res.num_FP
+                fn += batch_res.num_FN
 
             avg_loss = sum(losses) / num_batches
             accuracy = 100. * num_correct / num_samples
@@ -248,7 +235,8 @@ class Trainer(abc.ABC):
                                  f'(Avg. Loss {avg_loss:.3f}, '
                                  f'Accuracy {accuracy:.1f})')
 
-        return EpochResult(losses=losses, accuracy=accuracy,num_TP=TP,num_TN=TN,num_FP=FP,num_FN=FN, y=y, out = out)
+        return EpochResult(losses=losses, accuracy=accuracy, num_TP=tp, num_TN=tn, num_FP=fp, num_FN=fn, y=y, out=out)
+
 
 class FfTrainer(Trainer):
 
@@ -264,13 +252,13 @@ class FfTrainer(Trainer):
         loss.backward()
         self.optimizer.step()
 
-        num_correct = torch.sum((out > 0) == (y == 1))/9
-        TP = torch.sum((out > 0) * (y == 1))
-        TN = torch.sum((out <= 0) * (y == 0))
-        FP = torch.sum((out > 0) * (y == 0))
-        FN = torch.sum((out <= 0) * (y == 1))
+        num_correct = torch.sum((out > 0) == (y == 1)) / 9
+        tp = torch.sum((out > 0) * (y == 1))
+        tn = torch.sum((out <= 0) * (y == 0))
+        fp = torch.sum((out > 0) * (y == 0))
+        fn = torch.sum((out <= 0) * (y == 1))
 
-        return BatchResult(loss.item(), num_correct.item(),TP,TN,FP,FN,out,y)
+        return BatchResult(loss.item(), num_correct.item(), tp, tn, fp, fn, out, y)
 
     def test_batch(self, batch) -> BatchResult:
         x, y = batch
@@ -280,23 +268,23 @@ class FfTrainer(Trainer):
         with torch.no_grad():
             out = self.model(x)
             loss = self.loss_fn(out, y)
-            num_correct = torch.sum((out > 0) == (y == 1))/9
-            out_norm=torch.sigmoid(out)
-            if self.classification_threshold==None:
-                TP = torch.sum((out > 0) * (y == 1))
-                TN = torch.sum((out <= 0) * (y == 0))
-                FP = torch.sum((out > 0) * (y == 0))
-                FN = torch.sum((out <= 0) * (y == 1))
+            num_correct = torch.sum((out > 0) == (y == 1)) / 9
+            out_norm = torch.sigmoid(out)
+            if self.classification_threshold is None:
+                tp = torch.sum((out > 0) * (y == 1))
+                tn = torch.sum((out <= 0) * (y == 0))
+                fp = torch.sum((out > 0) * (y == 0))
+                fn = torch.sum((out <= 0) * (y == 1))
             else:
-                TP = torch.sum((out_norm >= self.classification_threshold) * (y == 1))
-                TN = torch.sum((out_norm < self.classification_threshold) * (y == 0))
-                FP = torch.sum((out_norm >= self.classification_threshold) * (y == 0))
-                FN = torch.sum((out_norm < self.classification_threshold) * (y == 1))  
+                tp = torch.sum((out_norm >= self.classification_threshold) * (y == 1))
+                tn = torch.sum((out_norm < self.classification_threshold) * (y == 0))
+                fp = torch.sum((out_norm >= self.classification_threshold) * (y == 0))
+                fn = torch.sum((out_norm < self.classification_threshold) * (y == 1))
                 num_correct = torch.sum((out_norm > self.classification_threshold) == (y == 1))
 
+        return BatchResult(loss.item(), num_correct.item(), tp, tn, fp, fn, out, y)
 
-        return BatchResult(loss.item(), num_correct.item(),TP,TN,FP,FN, out, y)
-    
+
 class Ecg12LeadNetTrainerBinary(Trainer):
 
     def train_batch(self, batch) -> BatchResult:
@@ -312,12 +300,12 @@ class Ecg12LeadNetTrainerBinary(Trainer):
         self.optimizer.step()
 
         num_correct = torch.sum((out > 0) == (y == 1))
-        TP = torch.sum((out > 0) * (y == 1))
-        TN = torch.sum((out <= 0) * (y == 0))
-        FP = torch.sum((out > 0) * (y == 0))
-        FN = torch.sum((out <= 0) * (y == 1))
+        tp = torch.sum((out > 0) * (y == 1))
+        tn = torch.sum((out <= 0) * (y == 0))
+        fp = torch.sum((out > 0) * (y == 0))
+        fn = torch.sum((out <= 0) * (y == 1))
 
-        return BatchResult(loss.item(), num_correct.item(),TP,TN,FP,FN,out,y)
+        return BatchResult(loss.item(), num_correct.item(), tp, tn, fp, fn, out, y)
 
     def test_batch(self, batch) -> BatchResult:
         x, y = batch
@@ -328,21 +316,20 @@ class Ecg12LeadNetTrainerBinary(Trainer):
             out = self.model(x).flatten()
             loss = self.loss_fn(out, y)
             num_correct = torch.sum((out > 0) == (y == 1))
-            out_norm=torch.sigmoid(out)
-            if self.classification_threshold==None:
-                TP = torch.sum((out > 0) * (y == 1))
-                TN = torch.sum((out <= 0) * (y == 0))
-                FP = torch.sum((out > 0) * (y == 0))
-                FN = torch.sum((out <= 0) * (y == 1))
+            out_norm = torch.sigmoid(out)
+            if self.classification_threshold is None:
+                tp = torch.sum((out > 0) * (y == 1))
+                tn = torch.sum((out <= 0) * (y == 0))
+                fp = torch.sum((out > 0) * (y == 0))
+                fn = torch.sum((out <= 0) * (y == 1))
             else:
-                TP = torch.sum((out_norm >= self.classification_threshold) * (y == 1))
-                TN = torch.sum((out_norm < self.classification_threshold) * (y == 0))
-                FP = torch.sum((out_norm >= self.classification_threshold) * (y == 0))
-                FN = torch.sum((out_norm < self.classification_threshold) * (y == 1))  
+                tp = torch.sum((out_norm >= self.classification_threshold) * (y == 1))
+                tn = torch.sum((out_norm < self.classification_threshold) * (y == 0))
+                fp = torch.sum((out_norm >= self.classification_threshold) * (y == 0))
+                fn = torch.sum((out_norm < self.classification_threshold) * (y == 1))
                 num_correct = torch.sum((out_norm > self.classification_threshold) == (y == 1))
 
-
-        return BatchResult(loss.item(), num_correct.item(),TP,TN,FP,FN, out, y)
+        return BatchResult(loss.item(), num_correct.item(), tp, tn, fp, fn, out, y)
 
 
 class Ecg12LeadNetTrainerMulticlass(Trainer):
@@ -354,15 +341,15 @@ class Ecg12LeadNetTrainerMulticlass(Trainer):
 
         self.optimizer.zero_grad()
 
-        out = self.model(x)#.flatten()
+        out = self.model(x)  # .flatten()
         loss = self.loss_fn(out, y)
         loss.backward()
         self.optimizer.step()
-        
-        indices = out>0#torch.max(out, 1)  #_, 
-        indices1 = y>0 #torch.max(y, 1)  #_, 
 
-        num_correct = torch.sum(indices==indices1)
+        indices = out > 0  # torch.max(out, 1)  #_,
+        indices1 = y > 0  # torch.max(y, 1)  #_,
+
+        num_correct = torch.sum(indices == indices1)
 
         return BatchResult(loss.item(), num_correct.item())
 
@@ -374,89 +361,123 @@ class Ecg12LeadNetTrainerMulticlass(Trainer):
         with torch.no_grad():
             out = self.model(x)
             loss = self.loss_fn(out.flatten(), y.flatten())
-            indices = out>0 #torch.max(out, 1) _, 
-            indices1 = y>0 #torch.max(y, 1) _, 
+            indices = out > 0  # torch.max(out, 1) _,
+            indices1 = y > 0  # torch.max(y, 1) _,
 
-            num_correct = torch.sum(indices==indices1)
+            num_correct = torch.sum(indices == indices1)
         return BatchResult(loss.item(), num_correct.item())
 
-class Ecg12LeadImageNetTrainerBinary(Trainer):
+
+class SimpleConvNetMulticlassTrainer(Trainer):
 
     def train_batch(self, batch) -> BatchResult:
         x, y = batch
-        x = x.transpose(1, 2).transpose(1, 3).to(self.device, dtype=torch.float)
+        x = x.to(self.device, dtype=torch.float)
         y = y.to(self.device, dtype=torch.float)
-
-        self.optimizer.zero_grad()
-
-        out = self.model(x).flatten()
-        loss = self.loss_fn(out, y)
-        loss.backward()
-        self.optimizer.step()
-
-        num_correct = torch.sum((out > 0) == (y == 1))
-        TP = torch.sum((out > 0) * (y == 1))
-        TN = torch.sum((out <= 0) * (y == 0))
-        FP = torch.sum((out > 0) * (y == 0))
-        FN = torch.sum((out <= 0) * (y == 1))
-
-        return BatchResult(loss.item(), num_correct.item(),TP,TN,FP,FN, out, y)        
-
-    def test_batch(self, batch) -> BatchResult:
-        x, y = batch
-        x = x.transpose(1, 2).transpose(1, 3).to(self.device, dtype=torch.float)
-        y = y.to(self.device, dtype=torch.float)
-
-        with torch.no_grad():
-            out = self.model(x).flatten()
-            loss = self.loss_fn(out, y)
-            num_correct = torch.sum((out > 0) == (y == 1))
-            out_norm=torch.softmax(out,dim=-1)
-            if self.classification_threshold==None:
-                TP = torch.sum((out > 0) * (y == 1))
-                TN = torch.sum((out <= 0) * (y == 0))
-                FP = torch.sum((out > 0) * (y == 0))
-                FN = torch.sum((out <= 0) * (y == 1))
-            else:
-                TP = torch.sum((out_norm > self.classification_threshold) * (y == 1))
-                TN = torch.sum((out_norm <= self.classification_threshold) * (y == 0))
-                FP = torch.sum((out_norm > self.classification_threshold) * (y == 0))
-                FN = torch.sum((out_norm <= self.classification_threshold) * (y == 1))                
-        return BatchResult(loss.item(), num_correct.item(),TP,TN,FP,FN, out, y)
-
-
-class EcgImageToDigitizedTrainer(Trainer):
-    def train_batch(self, batch) -> BatchResult:
-        x, y = batch
-        x = x.transpose(1, 2).transpose(1, 3).to(self.device, dtype=torch.float)
-        y = (y[0].to(self.device, dtype=torch.float), y[1].to(self.device, dtype=torch.float))
-        batch_size = y[0].shape[0]
-        dim_ratio = y[0].nelement()/y[1].nelement()
 
         self.optimizer.zero_grad()
 
         out = self.model(x)
-        loss = dim_ratio*self.loss_fn(out[0], y[0]) + self.loss_fn(out[1], y[1])
+        loss = self.loss_fn(out, y)
         loss.backward()
         self.optimizer.step()
 
-        num_correct = batch_size*(torch.sum(torch.abs(out[0]-y[0]) < 0.01) + torch.sum(torch.abs(out[1]-y[1]) < 0.01))\
-            / (torch.numel(y[0]) + torch.numel(y[1]))
+        with torch.no_grad():
+            num_correct, tp, tn, fp, fn, fb, gb, g_mean = calc_stats(y, out > 0)
 
-        return BatchResult(loss.item(), num_correct.item())
+        return BatchResult(loss.item(), num_correct.item(), tp, tn, fp, fn, fb, gb, g_mean, out, y)
 
     def test_batch(self, batch) -> BatchResult:
         x, y = batch
-        x = x.transpose(1, 2).transpose(1, 3).to(self.device, dtype=torch.float)
-        y = (y[0].to(self.device, dtype=torch.float), y[1].to(self.device, dtype=torch.float))
-        batch_size = y[0].shape[0]
+        x = x.to(self.device, dtype=torch.float)
+        y = y.to(self.device, dtype=torch.float)
 
         with torch.no_grad():
             out = self.model(x)
-            loss = self.loss_fn(out[0], y[0]) + self.loss_fn(out[1], y[1])
-            num_correct = \
-                batch_size * (
-                        torch.sum(torch.abs(out[0] - y[0]) < 0.01) + torch.sum(torch.abs(out[0] - y[0]) < 0.01)) \
-                / (torch.numel(y[0]) + torch.numel(y[1]))
+            loss = self.loss_fn(out, y)
+            num_correct, tp, tn, fp, fn, fb, gb, g_mean = calc_stats(y, out > 0)
 
-        return BatchResult(loss.item(), num_correct.item())
+        return BatchResult(loss.item(), num_correct.item(), tp, tn, fp, fn, fb, gb, g_mean, out, y)
+
+
+class PerClassTrainer(Trainer):
+    def __init__(self, training_class, *kargs):
+        super().__init__(*kargs)
+        self.training_class = training_class
+
+    def train_batch(self, batch) -> BatchResult:
+        x, y = batch
+        x = x.to(self.device, dtype=torch.float)
+        y = y[:, self.training_class:self.training_class+1].to(self.device, dtype=torch.float)
+
+        self.optimizer.zero_grad()
+
+        out = self.model(x)
+        loss = self.loss_fn(out, y)
+        loss.backward()
+        self.optimizer.step()
+
+        with torch.no_grad():
+            num_correct, tp, tn, fp, fn, fb, gb, g_mean = calc_stats(y, out > 0)
+
+        return BatchResult(loss.item(), num_correct.item(), tp, tn, fp, fn, fb, gb, g_mean, out, y)
+
+    def test_batch(self, batch) -> BatchResult:
+        x, y = batch
+        x = x.to(self.device, dtype=torch.float)
+        y = y[:, self.training_class:self.training_class+1].to(self.device, dtype=torch.float)
+
+        with torch.no_grad():
+            out = self.model(x)
+            loss = self.loss_fn(out, y)
+            num_correct, tp, tn, fp, fn, fb, gb, g_mean = calc_stats(y, out > 0)
+
+        return BatchResult(loss.item(), num_correct.item(), tp, tn, fp, fn, fb, gb, g_mean, out, y)
+
+
+def calc_stats(y, y_pred, class_weights=None, beta=2.0):
+    num_classes = y.shape[1]
+
+    num_correct = torch.sum(torch.sum((y == y_pred).to(dtype=torch.int64), dim=1) == num_classes)
+    tp = torch.sum((y == y_pred) * (y == 1), dim=0, keepdim=True)
+    tn = torch.sum((y == y_pred) * (y == 0), dim=0, keepdim=True)
+    fp = torch.sum((y != y_pred) * (y == 1), dim=0, keepdim=True)
+    fn = torch.sum((y != y_pred) * (y == 0), dim=0, keepdim=True)
+
+    fbl = ((1 + beta ** 2) * tp + EPS) / ((1 + beta ** 2) * tp + fp + beta ** 2 * fn + EPS)
+    gbl = (tp + EPS) / (tp + fp + beta * fn + EPS)
+    if torch.isnan(fbl).any():
+        print('fbl')
+        print((1 + beta ** 2) * tp + fp + beta ** 2 * fn)
+    if torch.isnan(gbl).any():
+        print('gbl')
+        print(tp + fp + beta * fn)
+
+    if class_weights is None:
+        class_weights = [1] * num_classes
+
+    w = torch.tensor(class_weights).reshape(num_classes, 1).to(y.device, dtype=y.dtype) * 1.0
+
+    fb = torch.matmul(fbl, w) / num_classes
+    gb = torch.matmul(gbl, w) / num_classes
+
+    g_mean = (fb * gb) ** 0.5
+
+    return num_correct, tp, tn, fp, fn, fb, gb, g_mean
+
+
+def train_val_test_split(ds, train=0.6, val=0.2, test=0.2, seed=None):
+    assert train + val + test == 1
+
+    if seed:
+        np.random.seed(seed)
+
+    probs = np.random.rand(len(ds))
+    inds = np.arange(len(ds))
+
+    ds_train = Subset(ds, inds[probs <= train])
+    ds_val = Subset(ds, inds[(train < probs) & (probs <= train + val)])
+    ds_test = Subset(ds, inds[train + val < probs])
+
+    assert len(ds_train) + len(ds_val) + len(ds_test) == len(ds)
+    return ds_train, ds_val, ds_test

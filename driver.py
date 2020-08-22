@@ -4,8 +4,8 @@ import numpy as np, os, sys
 from scipy.io import loadmat
 from run_12ECG_classifier import load_12ECG_model, run_12ECG_classifier
 
-
 def load_challenge_data(filename):
+
 
     x = loadmat(filename)
     data = np.asarray(x['val'], dtype=np.float64)

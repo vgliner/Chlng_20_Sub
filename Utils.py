@@ -3,7 +3,7 @@ import os
 import csv
 import numpy as np
 import scipy.signal
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 
 def split(source, dest_folder, write_size):
     # Make a destination folder if it doesn't exist yet
